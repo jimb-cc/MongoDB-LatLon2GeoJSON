@@ -9,8 +9,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/mongodb/mongo-go-driver/bson"
 	"github.com/mongodb/mongo-go-driver/mongo"
 )
@@ -31,7 +31,13 @@ func main() {
 
 	db := client.Database("AIS")
 
+	start := time.Now()
+	fmt.Printf("\n--Started at: %v\n", start)
 	readDocs(ctx, db)
+	finished := time.Now()
+	fmt.Printf("\n--Finished at: %v\n", finished)
+	fmt.Printf("--took: %v\n", (start.Sub(finished)))
+
 }
 
 func readDocs(ctx context.Context, db *mongo.Database) error {
@@ -51,13 +57,9 @@ func readDocs(ctx context.Context, db *mongo.Database) error {
 		doc.Append(
 			bson.EC.SubDocumentFromElements("coordinates",
 				bson.EC.String("type", "Point"),
-				bson.EC.ArrayFromElements("coordinates", bson.VC.Decimal128(doc.Lookup("Latitude").Decimal128()), bson.VC.Decimal128(doc.Lookup("Longitude").Decimal128()))))
+				bson.EC.ArrayFromElements("coordinates", bson.VC.Decimal128(doc.Lookup("Longitude").Decimal128()), bson.VC.Decimal128(doc.Lookup("Latitude").Decimal128()))))
 
-		fmt.Printf("lat: %v -- lon: %v", doc.Lookup("Latitude").Decimal128(), doc.Lookup("Longitude").Decimal128())
-		fmt.Println("\n----------------------------\n")
-
-		spew.Dump(doc)
-		fmt.Println("----------------------------\n\n")
+		insertDoc(ctx, db, doc)
 
 	}
 
@@ -65,6 +67,19 @@ func readDocs(ctx context.Context, db *mongo.Database) error {
 		return fmt.Errorf("all data couldn't be listed: %v", err)
 	}
 	return nil
+}
+
+func insertDoc(ctx context.Context, db *mongo.Database, doc *bson.Document) {
+
+	coll := db.Collection("ais_10_fix")
+	_, err := coll.InsertOne(ctx, doc)
+
+	if err != nil {
+		fmt.Printf("Can' insert all the docs: %v, \n", err)
+	}
+
+	fmt.Print(".")
+
 }
 
 /*
