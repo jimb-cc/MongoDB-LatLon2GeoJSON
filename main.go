@@ -15,50 +15,89 @@ import (
 	"github.com/mongodb/mongo-go-driver/mongo"
 )
 
+// define connection URI
+const uri = "mongodb://localhost"
+
+// define database
+const database = "AIS"
+
+// define source and destination collections
+const source = "ais_1m"
+const dest = "ais_1m_fix"
+
 func main() {
 	fmt.Println("-- Lat/Lon conversion to GeoJSON")
+
+	// create a context. I have no idea what this means. at all
 	ctx := context.Background()
 
-	client, err := mongo.NewClient("mongodb://localhost")
+	// create a connection to the DB
+	client, err := mongo.NewClient(uri)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// this bit makes no sense at all. I may have just copy/paste it from somewhere
 	err = client.Connect(context.TODO())
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	db := client.Database("AIS")
+	// select the database to use
+	db := client.Database(database)
 
+	// drop the destination collection (naughty! must deal with errors!)
+	_ = db.Collection(dest).Drop(ctx, nil)
+
+	// note the start time
 	start := time.Now()
 	fmt.Printf("\n--Started at: %v\n", start)
+
+	// start doing work
 	readDocs(ctx, db)
+
+	// note the end time
 	finished := time.Now()
 	fmt.Printf("\n--Finished at: %v\n", finished)
-	fmt.Printf("--took: %v\n", (start.Sub(finished)))
+	fmt.Printf("--took: %v\n", (finished.Sub(start)))
 
 }
 
 func readDocs(ctx context.Context, db *mongo.Database) error {
 
-	c, err := db.Collection("ais_10").Find(ctx, nil)
+	// find all the docs in the source collection
+	c, err := db.Collection(source).Find(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("Couldn't find any data: %v", err)
 	}
 	defer c.Close(ctx)
 
+	// iterate through the collection, one document at a time.
 	for c.Next(ctx) {
+		// load that document into a bson.NewDocument object
 		doc := bson.NewDocument()
 		if err = c.Decode(doc); err != nil {
 			return fmt.Errorf("can't decode a doc: %v", err)
 		}
 
-		doc.Append(
-			bson.EC.SubDocumentFromElements("coordinates",
-				bson.EC.String("type", "Point"),
-				bson.EC.ArrayFromElements("coordinates", bson.VC.Decimal128(doc.Lookup("Longitude").Decimal128()), bson.VC.Decimal128(doc.Lookup("Latitude").Decimal128()))))
+		// test to see if this document actually has a longitude value, some don't
+		if doc.Lookup("Longitude") != nil {
+			// and if does append a sub document to it made up from the values (VC - Value constructor) for Long and Lat.  Be careful to watch the order of Lon/Lat
+			doc.Append(
+				bson.EC.SubDocumentFromElements("coordinates",
+					bson.EC.String("type", "Point"),
+					bson.EC.ArrayFromElements("coordinates", bson.VC.Decimal128(doc.Lookup("Longitude").Decimal128()), bson.VC.Decimal128(doc.Lookup("Latitude").Decimal128()))))
 
+			// now, delete the two fields that are no longer needed.
+			doc.Delete("Longitude")
+			doc.Delete("Latitude")
+
+		} else {
+			// if you want, uncomment the below to see which records have no lon/lat
+			// fmt.Printf("--FAIL-FAIL-FAIL - %v has no things!\n", doc.Lookup("MMSI").Int32())
+		}
+
+		// once we have the newly shaped document, insert it into the DB
 		insertDoc(ctx, db, doc)
 
 	}
@@ -70,15 +109,14 @@ func readDocs(ctx context.Context, db *mongo.Database) error {
 }
 
 func insertDoc(ctx context.Context, db *mongo.Database, doc *bson.Document) {
-
-	coll := db.Collection("ais_10_fix")
+	// switch to the destination collection
+	coll := db.Collection(dest)
+	// insert the document into the collection
 	_, err := coll.InsertOne(ctx, doc)
 
 	if err != nil {
 		fmt.Printf("Can' insert all the docs: %v, \n", err)
 	}
-
-	fmt.Print(".")
 
 }
 
