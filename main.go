@@ -1,76 +1,101 @@
 package main
 
+// resources:
+// - https://www.compose.com/articles/mongodb-and-go-moving-on-from-mgo/
+// - https://gitlab.com/wemgl/todocli/blob/master/main.go
+// - https://godoc.org/github.com/mongodb/mongo-go-driver/bson
+
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
+	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/mongodb/mongo-go-driver/bson"
 	"github.com/mongodb/mongo-go-driver/mongo"
-
-	"github.com/TylerBrock/colorjson"
 )
+
+type aisRecord struct {
+	//objectID       string `json:"id"`
+	LRIMOShipNo    string
+	ShipName       string
+	ShipType       string
+	MMSI           int32
+	CallSign       string
+	Latitude       float64
+	Longitude      float64
+	Length         int32
+	Draught        float64
+	Beam           int32
+	Heading        float64
+	Speed          float64
+	Destination    string
+	ETA            time.Time `json:"ETA"`
+	MoveStatus     string
+	MoveDateTime   time.Time `json:"MovementDateTime"`
+	AdditionalInfo string
+	MovementID     int64
+}
 
 func main() {
 	fmt.Println("-- Lat/Lon conversion to GeoJSON")
+	ctx := context.Background()
 
 	client, err := mongo.NewClient("mongodb://localhost")
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	err = client.Connect(context.TODO())
 	if err != nil {
 		log.Fatal(err)
 	}
-	//db := client.Database("test")
-	//connectDB(db)
-	var str string
-	str = `{
-		"str": "foo",
-		"num": 100,
-		"bool": false,
-		"null": null,
-		"array": ["foo", "bar", "baz"],
-		"obj": { "a": 1, "b": 2 }
-	  }`
 
-	testpretty(str)
+	db := client.Database("test")
+
+	readDocs(ctx, db)
 }
 
-func connectDB(db *mongo.Database) {
-	coll := db.Collection("ais")
-
-	cur, err := coll.Find(context.Background(), nil)
+func readDocs(ctx context.Context, db *mongo.Database) error {
+	c, err := db.Collection("ais").Find(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("Couldn't find any data: %v", err)
 	}
-	defer cur.Close(context.Background())
+	defer c.Close(ctx)
 
-	for cur.Next(context.Background()) {
+	for c.Next(ctx) {
 		elem := bson.NewDocument()
-		err := cur.Decode(elem)
-		if err != nil {
-			log.Fatal(err)
+		if err = c.Decode(elem); err != nil {
+			return fmt.Errorf("can't decode a doc: %v", err)
 		}
+		s := aisRecord{
+			//objectID:       elem.Lookup("_id").StringValue(),
+			LRIMOShipNo:    elem.Lookup("LRIMOShipNo").StringValue(),
+			ShipName:       elem.Lookup("ShipName").StringValue(),
+			ShipType:       elem.Lookup("ShipType").StringValue(),
+			MMSI:           elem.Lookup("MMSI").Int32(),
+			CallSign:       elem.Lookup("CallSign").StringValue(),
+			Latitude:       elem.Lookup("Latitude").Double(),
+			Longitude:      elem.Lookup("Longitude").Double(),
+			Length:         elem.Lookup("Length").Int32(),
+			Draught:        elem.Lookup("Draught").Double(),
+			Beam:           elem.Lookup("Beam").Int32(),
+			Heading:        elem.Lookup("Heading").Double(),
+			Speed:          elem.Lookup("Speed").Double(),
+			Destination:    elem.Lookup("Destination").StringValue(),
+			ETA:            elem.Lookup("ETA").DateTime(),
+			MoveStatus:     elem.Lookup("MoveStatus").StringValue(),
+			MoveDateTime:   elem.Lookup("MovementDateTime").DateTime(),
+			AdditionalInfo: elem.Lookup("AdditionalInfo").StringValue(),
+			MovementID:     elem.Lookup("MovementID").Int64()}
 
-		s, _ := colorjson.Marshal(elem)
+		spew.Printf("%#v", s)
 
-		fmt.Println(string(s))
 	}
-	if err := cur.Err(); err != nil {
-		log.Fatal(err)
+
+	if err = c.Err(); err != nil {
+		return fmt.Errorf("all data couldn't be listed: %v", err)
 	}
-
-}
-
-func testpretty(str string) {
-
-	var obj map[string]interface{}
-	json.Unmarshal([]byte(str), &obj)
-	f := colorjson.NewFormatter()
-	f.Indent = 2
-	s, _ := f.Marshal(obj)
-	fmt.Println(string(s))
-
+	return nil
 }
