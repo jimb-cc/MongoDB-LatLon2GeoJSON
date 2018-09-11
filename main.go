@@ -25,20 +25,26 @@ const database = "AIS"
 const source = "ais_1m"
 const dest = "ais_1m_fix"
 
+// How many docs to read and write at once as part of a bulk insert
+const batchSize = 1000
+
+// how many docs have we got left to process
+var docsLeft int
+
 func main() {
-	fmt.Println("-- Lat/Lon conversion to GeoJSON")
+	fmt.Println("\n----------------------------------\n-- Lat/Lon conversion to GeoJSON |\n----------------------------------")
 
 	// create a context. I have no idea what this means. at all
 	ctx := context.Background()
 
-	// create a connection to the DB
+	// create a client for the DB
 	client, err := mongo.NewClient(uri)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// this bit makes no sense at all. I may have just copy/paste it from somewhere
-	err = client.Connect(context.TODO())
+	// Connect the client to the DB
+	err = client.Connect(ctx)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -48,13 +54,17 @@ func main() {
 
 	// drop the destination collection (naughty! must deal with errors!)
 	_ = db.Collection(dest).Drop(ctx, nil)
+	_ = db.Collection("error").Drop(ctx, nil)
 
 	// note the start time
 	start := time.Now()
 	fmt.Printf("\n--Started at: %v\n", start)
 
+	// find out how many docs we have to process
+	countDocs(ctx, db)
+
 	// start doing work
-	readDocs(ctx, db)
+	processDocs(ctx, db, batchSize)
 
 	// note the end time
 	finished := time.Now()
@@ -63,7 +73,22 @@ func main() {
 
 }
 
-func readDocs(ctx context.Context, db *mongo.Database) error {
+func countDocs(ctx context.Context, db *mongo.Database) error {
+	// count the number of documents in the source collection
+	count, err := db.Collection(source).Count(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("Couldn't find any data: %v", err)
+	}
+	fmt.Printf("--there are %v docs in the collection\n\n", count)
+
+	docsLeft = int(count)
+
+	return nil
+}
+
+func processDocs(ctx context.Context, db *mongo.Database, batchSize int) error {
+
+	fmt.Printf("--starting to process documents in batches of %v\n", batchSize)
 
 	// find all the docs in the source collection
 	c, err := db.Collection(source).Find(ctx, nil)
@@ -72,103 +97,65 @@ func readDocs(ctx context.Context, db *mongo.Database) error {
 	}
 	defer c.Close(ctx)
 
-	// iterate through the collection, one document at a time.
-	for c.Next(ctx) {
-		// load that document into a bson.NewDocument object
-		doc := bson.NewDocument()
-		if err = c.Decode(doc); err != nil {
-			return fmt.Errorf("can't decode a doc: %v", err)
+	//create a slice to hold the batch of documents in.
+
+	for docsLeft > 0 {
+
+		var docs []interface{}
+		for i := 0; i < batchSize; i++ {
+			c.Next(ctx)
+			// load that document into a bson.NewDocument object
+			doc := bson.NewDocument()
+
+			if err = c.Decode(doc); err != nil {
+				//return fmt.Errorf("can't decode a doc: %v", err)
+			}
+
+			// test to see if this document actually has a longitude value, some don't
+			if doc.Lookup("Longitude") != nil {
+				// and if does append a sub document to it made up from the values (VC - Value constructor) for Long and Lat.  Be careful to watch the order of Lon/Lat
+				doc.Append(
+					bson.EC.SubDocumentFromElements("coordinates",
+						bson.EC.String("type", "Point"),
+						bson.EC.ArrayFromElements("coordinates", bson.VC.Decimal128(doc.Lookup("Longitude").Decimal128()), bson.VC.Decimal128(doc.Lookup("Latitude").Decimal128()))))
+
+				// now, delete the two fields that are no longer needed.
+				doc.Delete("Longitude")
+				doc.Delete("Latitude")
+
+			} else {
+				// if you want, uncomment the below to see which records have no lon/lat
+				// badDataLog(ctx, db, doc)
+				// fmt.Printf("--FAIL-FAIL-FAIL - %v has no lat/lon!\n", doc.Lookup("MMSI").Int32())
+			}
+
+			docs = append(docs, doc)
 		}
 
-		// test to see if this document actually has a longitude value, some don't
-		if doc.Lookup("Longitude") != nil {
-			// and if does append a sub document to it made up from the values (VC - Value constructor) for Long and Lat.  Be careful to watch the order of Lon/Lat
-			doc.Append(
-				bson.EC.SubDocumentFromElements("coordinates",
-					bson.EC.String("type", "Point"),
-					bson.EC.ArrayFromElements("coordinates", bson.VC.Decimal128(doc.Lookup("Longitude").Decimal128()), bson.VC.Decimal128(doc.Lookup("Latitude").Decimal128()))))
+		docsLeft = docsLeft - batchSize
+		fmt.Printf("%v Docs left to process\n", docsLeft)
 
-			// now, delete the two fields that are no longer needed.
-			doc.Delete("Longitude")
-			doc.Delete("Latitude")
-
-		} else {
-			// if you want, uncomment the below to see which records have no lon/lat
-			// fmt.Printf("--FAIL-FAIL-FAIL - %v has no things!\n", doc.Lookup("MMSI").Int32())
-		}
-
-		// once we have the newly shaped document, insert it into the DB
-		insertDoc(ctx, db, doc)
+		_, err = db.Collection(dest).InsertMany(ctx, docs)
 
 	}
 
 	if err = c.Err(); err != nil {
 		return fmt.Errorf("all data couldn't be listed: %v", err)
 	}
+
 	return nil
 }
 
-func insertDoc(ctx context.Context, db *mongo.Database, doc *bson.Document) {
-	// switch to the destination collection
-	coll := db.Collection(dest)
-	// insert the document into the collection
-	_, err := coll.InsertOne(ctx, doc)
+func badDataLog(ctx context.Context, db *mongo.Database, doc *bson.Document) {
 
-	if err != nil {
-		fmt.Printf("Can' insert all the docs: %v, \n", err)
+	badDoc := bson.NewDocument()
+
+	if doc.Lookup("ShipName") != nil {
+		badDoc.Append(bson.EC.String("ShipName", doc.Lookup("ShipName").StringValue()), bson.EC.Int32("MMSI", doc.Lookup("MMSI").Int32()))
+	} else {
+		badDoc.Append(bson.EC.Int32("MMSI", doc.Lookup("MMSI").Int32()))
 	}
 
+	_, _ = db.Collection("error").InsertOne(ctx, badDoc)
+
 }
-
-/*
-
-"coordinates":{
-	"type":"Point",
-	"coordinates":[-118.21171,33.77161]
-	}
-
-type aisRecord struct {
-	//objectID       string `json:"id"`
-	LRIMOShipNo    string
-	ShipName       string
-	ShipType       string
-	MMSI           int32
-	CallSign       string
-	Latitude       float64
-	Longitude      float64
-	Length         int32
-	Draught        float64
-	Beam           int32
-	Heading        float64
-	Speed          float64
-	Destination    string
-	ETA            time.Time `json:"ETA"`
-	MoveStatus     string
-	MoveDateTime   time.Time `json:"MovementDateTime"`
-	AdditionalInfo string
-	MovementID     int64
-}
-*/
-
-/*
-	s := aisRecord{
-		//objectID:       elem.Lookup("_id").StringValue(),
-		LRIMOShipNo:    elem.Lookup("LRIMOShipNo").StringValue(),
-		ShipName:       elem.Lookup("ShipName").StringValue(),
-		ShipType:       elem.Lookup("ShipType").StringValue(),
-		MMSI:           elem.Lookup("MMSI").Int32(),
-		CallSign:       elem.Lookup("CallSign").StringValue(),
-		Latitude:       elem.Lookup("Latitude").Double(),
-		Longitude:      elem.Lookup("Longitude").Double(),
-		Length:         elem.Lookup("Length").Int32(),
-		Draught:        elem.Lookup("Draught").Double(),
-		Beam:           elem.Lookup("Beam").Int32(),
-		Heading:        elem.Lookup("Heading").Double(),
-		Speed:          elem.Lookup("Speed").Double(),
-		Destination:    elem.Lookup("Destination").StringValue(),
-		ETA:            elem.Lookup("ETA").DateTime(),
-		MoveStatus:     elem.Lookup("MoveStatus").StringValue(),
-		MoveDateTime:   elem.Lookup("MovementDateTime").DateTime(),
-		AdditionalInfo: elem.Lookup("AdditionalInfo").StringValue(),
-		MovementID:     elem.Lookup("MovementID").Int64()}
-*/
