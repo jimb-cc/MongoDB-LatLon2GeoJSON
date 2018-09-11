@@ -34,7 +34,7 @@ var docsLeft int
 func main() {
 	fmt.Println("\n----------------------------------\n-- Lat/Lon conversion to GeoJSON |\n----------------------------------")
 
-	// create a context. I have no idea what this means. at all
+	// create a context. (note to self, learn what a context is...)
 	ctx := context.Background()
 
 	// create a client for the DB
@@ -97,10 +97,8 @@ func processDocs(ctx context.Context, db *mongo.Database, batchSize int) error {
 	}
 	defer c.Close(ctx)
 
-	//create a slice to hold the batch of documents in.
-
 	for docsLeft > 0 {
-
+		//create a slice to hold the batch of documents in.
 		var docs []interface{}
 		for i := 0; i < batchSize; i++ {
 			c.Next(ctx)
