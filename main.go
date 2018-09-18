@@ -30,15 +30,17 @@ var uri = flag.String("uri", "mongodb://localhost", "The URI of the MongoDB inst
 var database = flag.String("db", "defaultdb", "The database to work in")
 
 // define source and destination collections
-const source = "ais_10k"
-const dest = "ais_10k_fix"
+var source = flag.String("source", "", "the source collection")
+var dest = flag.String("dest", "", "the destination collection")
 
 // define the names of the fields containing the lat/lon coords
-const lat = "Latitude"
-const lon = "Longitude"
+var lat = flag.String("fieldNameLat", "Latitude", "the name of the field in the source collection holding the Lattitude data")
+var lon = flag.String("fieldNameLon", "Longitude", "the name of the field in the source collection holding the Longitude data")
 
 // How many docs to read and write at once as part of a bulk insert
-const batchSize = 1000
+var batchSize = flag.Int("batchSize", 1000, "the number of documents to process in one batch")
+
+// delete source lat/lons
 
 // how many docs have we got left to process
 var docsLeft int
