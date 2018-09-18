@@ -5,8 +5,16 @@ package main
 // - https://gitlab.com/wemgl/todocli/blob/master/main.go
 // - https://godoc.org/github.com/mongodb/mongo-go-driver/bson
 
+// todo:
+// - work out what contexts are
+// - deal with collections sizes that are not a multiple of batch size
+// - implement command line options
+// - 2nd mode, update in place rather than copying to a new collection
+// - make deletion of original lat/lon fields optional
+
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"time"
@@ -15,15 +23,19 @@ import (
 	"github.com/mongodb/mongo-go-driver/mongo"
 )
 
-// define connection URI
-const uri = "mongodb://localhost"
+// grab a var for the connection string from the command line.
+var uri = flag.String("uri", "mongodb://localhost", "The URI of the MongoDB instance you want to connect to")
 
 // define database
-const database = "AIS"
+var database = flag.String("db", "defaultdb", "The database to work in")
 
 // define source and destination collections
-const source = "ais_1m"
-const dest = "ais_1m_fix"
+const source = "ais_10k"
+const dest = "ais_10k_fix"
+
+// define the names of the fields containing the lat/lon coords
+const lat = "Latitude"
+const lon = "Longitude"
 
 // How many docs to read and write at once as part of a bulk insert
 const batchSize = 1000
@@ -32,13 +44,18 @@ const batchSize = 1000
 var docsLeft int
 
 func main() {
-	fmt.Println("\n----------------------------------\n-- Lat/Lon conversion to GeoJSON |\n----------------------------------")
+	fmt.Println("\n---------------------------------\n--Lat/Lon conversion to GeoJSON |\n---------------------------------")
+
+	// parse the flags
+	flag.Parse()
+
+	fmt.Printf("\n--uri: %v -- db is: %v\n", *uri, *database)
 
 	// create a context. (note to self, learn what a context is...)
 	ctx := context.Background()
 
 	// create a client for the DB
-	client, err := mongo.NewClient(uri)
+	client, err := mongo.NewClient(*uri)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -50,7 +67,7 @@ func main() {
 	}
 
 	// select the database to use
-	db := client.Database(database)
+	db := client.Database(*database)
 
 	// drop the destination collection (naughty! must deal with errors!)
 	_ = db.Collection(dest).Drop(ctx, nil)
@@ -110,7 +127,7 @@ func processDocs(ctx context.Context, db *mongo.Database, batchSize int) error {
 			}
 
 			// test to see if this document actually has a longitude value, some don't
-			if doc.Lookup("Longitude") != nil {
+			if doc.Lookup(lon) != nil {
 				// and if does append a sub document to it made up from the values (VC - Value constructor) for Long and Lat.  Be careful to watch the order of Lon/Lat
 				doc.Append(
 					bson.EC.SubDocumentFromElements("coordinates",
@@ -118,8 +135,8 @@ func processDocs(ctx context.Context, db *mongo.Database, batchSize int) error {
 						bson.EC.ArrayFromElements("coordinates", bson.VC.Decimal128(doc.Lookup("Longitude").Decimal128()), bson.VC.Decimal128(doc.Lookup("Latitude").Decimal128()))))
 
 				// now, delete the two fields that are no longer needed.
-				doc.Delete("Longitude")
-				doc.Delete("Latitude")
+				doc.Delete(lon)
+				doc.Delete(lat)
 
 			} else {
 				// if you want, uncomment the below to see which records have no lon/lat
