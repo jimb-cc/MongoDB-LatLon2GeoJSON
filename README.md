@@ -13,7 +13,8 @@ Usage of ./main:
   -db string
         The database to work in (default "AIS")
   -deleteLatLonfields
-        Once the data is proccessed delete the original Lat Lon fields from the processed records, leaving only the GeoJSON (default true)
+        Once the data is proccessed delete the original Lat Lon fields from the processed records, 
+        leaving only the GeoJSON (default true)
   -dest string
         the destination collection (default "ais_10k_fix")
   -dropDestColl
