@@ -6,11 +6,7 @@ Very much a work in progress.
 
 
 
-
-
----------------------------------
---Lat/Lon conversion to GeoJSON |
----------------------------------
+```bash
 Usage of ./main:
   -batchSize int
         the number of documents to process in one batch (default 1000)
@@ -32,3 +28,4 @@ Usage of ./main:
         the source collection (default "ais_10k")
   -uri string
         The URI of the MongoDB instance you want to connect to (default "mongodb://localhost")
+```
