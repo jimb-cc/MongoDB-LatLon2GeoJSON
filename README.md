@@ -6,7 +6,7 @@ Very much a work in progress.
 
 
 
-```bash
+```
 Usage of ./main:
   -batchSize int
         the number of documents to process in one batch (default 1000)
