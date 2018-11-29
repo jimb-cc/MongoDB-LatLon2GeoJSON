@@ -11,8 +11,8 @@ package main
 // - DONE -- implement command line options
 // - DONE -- make dropping collection optional
 // - 2nd mode, update in place rather than copying to a new collection
-// - make deletion of original lat/lon fields optional
-// - delete the objectID so we don't get duplication errors when not dropping the dest collection on startup
+// - DONE -- make deletion of original lat/lon fields optional
+// - PARTIAL -- delete the objectID so we don't get duplication errors when not dropping the dest collection on startup
 
 import (
 	"context"
